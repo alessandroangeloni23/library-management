@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd 
-http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+<mule xmlns:java="http://www.mulesoft.org/schema/mule/java" xmlns:validation="http://www.mulesoft.org/schema/mule/validation" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd 
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd
+http://www.mulesoft.org/schema/mule/java http://www.mulesoft.org/schema/mule/java/current/mule-java.xsd">
     <http:listener-config name="library-management-api-httpListenerConfig">
         <http:listener-connection host="0.0.0.0" port="8081" />
     </http:listener-config>
@@ -128,13 +130,57 @@ output application/json
         </error-handler>
     </flow>
     <flow name="get:\book\(ISBN):library-management-api-config">
-        <db:select doc:name="Select" doc:id="d07b3de2-246a-4ea5-9f3d-ab4674698c4a" config-ref="Database_Config">
-			<db:sql ><![CDATA[SELECT * FROM "library-schema".books WHERE isbn = :uri_isbn;]]></db:sql>
-			<db:input-parameters ><![CDATA[#[{ uri_isbn: attributes.uriParams.ISBN }]]]></db:input-parameters>
+		<set-variable value="#[attributes.uriParams.ISBN as Number]" doc:name="input_isbn" doc:id="484685bc-2f6e-4e94-8d25-1578be5eb7c5" variableName="input_isbn"/>
+		<validation:validate-size doc:name="Validate size" doc:id="9ec3d4c3-5899-4fc1-acf5-5d96360c43e7" value="#[attributes.uriParams.ISBN]" min="13" max="13" message="ISBN code not valid."/>
+		<db:select doc:name="Select" doc:id="d07b3de2-246a-4ea5-9f3d-ab4674698c4a" config-ref="Database_Config">
+			<db:sql><![CDATA[SELECT * FROM "library-schema".books WHERE isbn = :uri_isbn;]]></db:sql>
+			<db:input-parameters><![CDATA[#[{ uri_isbn: attributes.uriParams.ISBN }]]]></db:input-parameters>
 		</db:select>
-		<set-payload value="#[%dw 2.0&#10;output application/json&#10;---&#10;payload[0]]" doc:name="Set Payload" doc:id="a83f96bd-ee9c-4e20-ad27-c8bc77f87377" />
+		<!-- [STUDIO:"Logger"]<logger level="INFO" doc:name="Logger" doc:id="e4f40ad2-66a7-4470-bc2f-89b863350e3a" message="#[sizeOf(payload)&#93;" /> [STUDIO] -->
+		<choice doc:name="Choice" doc:id="8ed917c3-5172-4b23-a6d2-de6ceadf5ab4">
+			<when expression='#[sizeOf(payload) == 0]'>
+				<db:select doc:name="Select" doc:id="e4f426de-ebfd-4dfa-89ab-137c41454696" config-ref="Database_Config">
+					<db:sql><![CDATA[SELECT isbn FROM "library-schema".books;]]></db:sql>
+				</db:select>
+				<set-payload value="#[%dw 2.0&#10;output application/json&#10;---&#10;payload]" doc:name="Set Payload" doc:id="bfa94ac4-3d2f-471b-b92a-1ddf56231aeb" />
+				<scatter-gather doc:name="Scatter-Gather" doc:id="d6a05710-3a4a-45da-9f98-aabef0711e5f" >
+					<route >
+						<set-payload value='#[%dw 2.0&#10;output application/json&#10;fun Obj2String(obj) = (obj pluck (value, key) -&gt; value as String)[0]&#10;fun ObjArray2StringArray(array) = (array map (item) -&gt; Obj2String(item))&#10;fun PrintList(array) = ObjArray2StringArray(array) joinBy ", "&#10;---&#10;//obj2string(payload[0])&#10;//array2string(payload)&#10;//ObjArray2StringArray(payload)&#10;"The inserted ISBN does not match with any of the books in the database. This is a list of the accepted ISBN codes: " ++ PrintList(payload)]' doc:name="Set Payload" doc:id="37760502-e261-4b3c-be05-d3e7e9c255e9" />
+					</route>
+					<route >
+						<set-variable value="#[[]]" doc:name="new_payload_array" doc:id="6fe05ca8-0971-45fb-a3e4-848b2bf61bac" variableName="new_payload_array"/>
+						<foreach doc:name="For Each" doc:id="6d7ae803-f6cd-4dd2-adba-47719286b35a" collection="#[payload]">
+							<ee:transform doc:name="Transform Message" doc:id="e86092d3-6085-40cd-9727-c704cd247e27" >
+								<ee:message >
+									<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+fun Obj2String(obj) = (obj pluck (value, key) -> value as String)[0]
+---
+//Note: inside a for-each, payload is now one of the many entries of the original payload!
+//In this case, a payload inside the for-each scope is one of the many isbn contained in the original payload!
+//IMPORTANT: for-each scopes do NOT modify the current payload!
+(Obj2String(payload) as Number) - vars.input_isbn]]></ee:set-payload>
+								</ee:message>
+							</ee:transform>
+							<set-variable value="#[vars.new_payload_array + payload]" doc:name="new_payload_array" doc:id="f787bc61-dd44-4288-945e-a397e46f0310" variableName="new_payload_array" />
+							<!-- [STUDIO:"Logger"]<logger level="INFO" doc:name="Logger" doc:id="5bd14d22-c15f-448e-8b2a-c7948df3f7aa" message="#[payload&#93;"/> [STUDIO] -->
+						</foreach>
+						<set-payload doc:name="Set Payload" doc:id="748c2220-24b9-4497-85b6-8e52b0819cb0" value="#[vars.new_payload_array]"/>
+					</route>
+				</scatter-gather>
+				<set-payload value="#[%dw 2.0&#10;output application/json&#10;---&#10;flatten(valuesOf(payload) map ((item, index) -&gt; item.*payload))]" doc:name="Set Payload" doc:id="fb60db0b-19d2-4153-aded-e0ddd9cd1e7f" />
+			</when>
+			<otherwise>
+				<set-payload value="#[payload]" doc:name="Set Payload" doc:id="2ca07e61-ce0a-48ec-93d5-004566ac2082" />
+			</otherwise>
+		</choice>
+		<error-handler >
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="95dd1aa9-643b-4abf-8db6-7148888b1eb6" >
+				<set-payload value="#[error.description]" doc:name="Set Payload" doc:id="a39bcf65-8477-4562-90a1-fc2d93afb6ff" />
+			</on-error-propagate>
+		</error-handler>
     </flow>
-    <flow name="post:\book:application\json:library-management-api-config">
+	<flow name="post:\book:application\json:library-management-api-config">
 		<db:stored-procedure doc:name="Stored procedure" doc:id="84a05986-112a-4185-844a-3d59e322a2c6" config-ref="Database_Config">
 			<db:sql ><![CDATA[INSERT INTO "library-schema".books (title, author, year, isbn) VALUES ( :input_title, :input_author, :input_year, :input_isbn)]]></db:sql>
 			<db:input-parameters ><![CDATA[#[{
